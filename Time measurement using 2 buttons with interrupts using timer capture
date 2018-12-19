@@ -1,7 +1,7 @@
 #include <msp430g2553.h>
 
-volatile float zaman_1=0;
-volatile float zaman_2=0;
+volatile float time_1=0;
+volatile float time_2=0;
 volatile float difference=0;
 
 void main(void)
@@ -16,22 +16,6 @@ void main(void)
 
 //    P1DIR |=BIT0 + BIT4;//BUZZER VE LED OUTPUT(SUBJECT TO CHANGE!)
 
-    /*P2OUT =0;
-    P2OUT =BIT1;//PULL-UP RES ENABLED
-    P2REN |=BIT1;//TIMER0_A CCI0A INPUT
-
-    P2IE |=BIT1;
-    P2IES|=BIT1;
-    P2IFG&= ~BIT1;
-
-    P2OUT =0;
-    P2OUT =BIT4;//PULL-UP RES ENABLED
-    P2REN |=BIT4;//TIMER0_A CCI1A INPUT
-
-    P2IE |=BIT4;
-    P2IES|=BIT4;
-    P2IFG&= ~BIT4;*/
-    
     P2DIR &= ~BIT1;
     P2REN |= BIT1;
     P2OUT |= BIT1;
@@ -48,7 +32,7 @@ void main(void)
     while(1)
     {
         _BIS_SR(CPUOFF+ GIE);//LOW POWER MOD VE GLOBAL INTERRUPT SETUP
-        difference=zaman_1-zaman_2;//BURASI FREKANS OLCUYOR OLABILIR DEGISEBILIR ALGORITMA
+        difference=time_1-time_2;//BURASI FREKANS OLCUYOR OLABILIR DEGISEBILIR ALGORITMA
         difference=abs(difference);
         //DISPLAY E BURDA YAZDIRACAKSIN
     }
