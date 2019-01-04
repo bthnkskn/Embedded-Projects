@@ -1,0 +1,262 @@
+/*
+    http://karuppuswamy.com/wordpress/2015/03/12/msp430-launchpad-interface-with-16x2-lcd-display/
+    uC and LCD Connections
+    TP1 - Vcc (+5v)
+    TP3 - Vss (Gnd)
+    P1.0 - D4
+    P1.1 - D5
+    P1.2 - D6
+    P1.3 - D7
+    P1.4 - EN
+    P1.5 - RS
+    Gnd  - RW
+    Gnd  - Vee through 1K Resistor  - this value determines contrast - i.e. direct connection to Gnd means all dots displayed
+    Gnd  - K (LED-)
+    Vcc  - A (LED+) +5V
+*/
+
+#include <msp430g2553.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define left_button BIT1
+#define right_button BIT2
+#define NOBUTTON -1
+#define LEFTBUTTON 0
+#define RIGHTBUTTON 1
+
+volatile float ms;//MILLISECONDS VAR
+volatile float sec;//SECONDS VAR
+volatile float difference;//TIME DIFF. VAR IN MS
+volatile float time_left_ms;//LEFT BUTTON TIME VAR IN MS
+volatile float time_right_ms;//RIGHT BUTTON TIME VAR IN MS
+volatile float time_main_in_ms;//CONT. TIMER VAR IN MS
+int first_pressed_button=NOBUTTON;
+char difference_string[4];//REQUIRED FOR ITOA CONV.
+
+// uC Port definitions
+#define lcd_port        P1OUT
+#define lcd_port_dir    P1DIR
+
+// LCD Registers masks based on pin to which it is connected
+#define LCD_EN      BIT4
+#define LCD_RS      BIT5
+
+void lcd_reset()
+{
+    lcd_port_dir = 0xff;    // output mode
+    lcd_port = 0xff;
+    __delay_cycles(20000);
+    lcd_port = 0x03+LCD_EN;
+    lcd_port = 0x03;
+    __delay_cycles(10000);
+    lcd_port = 0x03+LCD_EN;
+    lcd_port = 0x03;
+    __delay_cycles(1000);
+    lcd_port = 0x03+LCD_EN;
+    lcd_port = 0x03;
+    __delay_cycles(1000);
+    lcd_port = 0x02+LCD_EN;
+    lcd_port = 0x02;
+    __delay_cycles(1000);
+}
+
+void lcd_cmd (char cmd)
+{
+    // Send upper nibble
+    lcd_port = ((cmd >> 4) & 0x0F)|LCD_EN;
+    lcd_port = ((cmd >> 4) & 0x0F);
+
+    // Send lower nibble
+    lcd_port = (cmd & 0x0F)|LCD_EN;
+    lcd_port = (cmd & 0x0F);
+
+    __delay_cycles(4000);
+}
+
+void lcd_init ()
+{
+    lcd_reset();         // Call LCD reset
+    lcd_cmd(0x28);       // 4-bit mode - 2 line - 5x7 font.
+    lcd_cmd(0x0C);       // Display no cursor - no blink.
+    lcd_cmd(0x06);       // Automatic Increment - No Display shift.
+    lcd_cmd(0x80);       // Address DDRAM with 0 offset 80h.
+    lcd_cmd(0x01);       // Clear screen
+}
+
+
+void lcd_data (unsigned char dat)
+{
+    // Send upper nibble
+    lcd_port = (((dat >> 4) & 0x0F)|LCD_EN|LCD_RS);
+    lcd_port = (((dat >> 4) & 0x0F)|LCD_RS);
+
+    // Send lower nibble
+    lcd_port = ((dat & 0x0F)|LCD_EN|LCD_RS);
+    lcd_port = ((dat & 0x0F)|LCD_RS);
+
+    __delay_cycles(5000); //Lower than this value results in missing character in display
+}
+
+void display_line(char *line)
+{
+    while (*line)
+        lcd_data(*line++);
+}
+
+void display_difference(char *line, int len)
+{
+    while (len--)
+        if (*line)
+            lcd_data(*line++);
+        else
+            lcd_data(' ');
+}
+
+void itoa(long unsigned int value, char* result, int base)
+    {
+      // check that the base if valid
+      if (base < 2 || base > 36) { *result = '\0';}
+
+      char* ptr = result, *ptr1 = result, tmp_char;
+      int tmp_value;
+
+      do {
+        tmp_value = value;
+        value /= base;
+        *ptr++ = "zyxwvutsrqponmlkjihgfedcba9876543210123456789abcdefghijklmnopqrstuvwxyz" [35 + (tmp_value - value * base)];
+      } while ( value );
+
+      // Apply negative sign
+      if (tmp_value < 0) *ptr++ = '-';
+      *ptr-- = '\0';
+      while(ptr1 < ptr) {
+        tmp_char = *ptr;
+        *ptr--= *ptr1;
+        *ptr1++ = tmp_char;
+      }
+
+    }
+
+void main(void)
+{
+    WDTCTL = WDTPW + WDTHOLD;//WATCHDOG SETUP
+    BCSCTL1= CALBC1_8MHZ;//1 MHZ CLOCK SETUP
+    DCOCTL= CALDCO_8MHZ;//1 MHZ CLOCK SETUP
+
+    CCR0=1000;//COUNT TO THIS VALUE AND GENERATE AN INTERRUPT(1ms)
+    TA0CTL= TASSEL_2+ID_3+MC_1;//SMCLK,1MHZ,COUNT UP TO CCR0
+    CCTL0=CCIE;//CAPTURE COMPARE INTERRUPT ENABLE
+
+    P1DIR |=BIT6 + BIT7;//LED OUTPUT BIT6->LEFTBUTTON BIT7->RIGHTBUTTON
+    P1OUT |=BIT6 + BIT7;
+    P1OUT=0;
+
+    P2DIR &=~left_button;//INPUT LEFT BUTTON
+    P2OUT |= left_button;//SET PULLUP
+    P2REN |= left_button;//PULLUP RES ENABLE
+
+    P2IE  |= left_button;//INTERRUPT ENABLE
+    P2IES |= left_button;//INTERRUPT NEG EDGE
+    P2IFG &=~left_button;//CLEAR INTERRUPT FLAG
+
+    P2DIR &=~right_button;//INPUT RIGHT BUTTON
+    P2OUT |= right_button;//SET PULLUP
+    P2REN |= right_button;//PULLUP RES ENABLE
+
+    P2IE  |= right_button;//INTERRUPT ENABLE
+    P2IES |= right_button;//INTERRUPT NEG EDGE
+    P2IFG &=~right_button;//CLEAR INTERRUPT FLAG
+
+    lcd_init();
+
+    while(1)
+    {
+        _BIS_SR(CPUOFF+GIE);//LOW POWER MOD+GLOBAL INTERRUPT ENABLE
+    }
+}
+
+#pragma vector=PORT2_VECTOR //BUTTON INTERRUPTS AND CONDITION CHECKS
+__interrupt void BUTTON_CHECKING(void)
+{
+       if((P2IN&left_button)==0)
+       {
+           if((first_pressed_button) == NOBUTTON)
+           {
+               first_pressed_button = LEFTBUTTON;
+               time_left_ms=time_main_in_ms;
+               P2IFG&=~BIT1;
+           }
+
+           if((first_pressed_button) == RIGHTBUTTON)
+           {
+               P1OUT^=BIT7;//LIGHT THE RIGHT LED FOR 4 SECONDS
+               __delay_cycles(4000000);
+               P1OUT&=~BIT7;
+               __delay_cycles(4000000);
+               time_left_ms=time_main_in_ms;
+               difference=abs(time_right_ms-time_left_ms);
+               itoa(difference, difference_string, 10);
+               lcd_cmd(0x80); // select 1st line (0x80 + addr) - here addr = 0x00
+               display_line("Player 2 wins!");
+               lcd_cmd(0xc0); // select 2nd line (0x80 + addr) - here addr = 0x40
+               display_line("Diff(ms): ");
+               lcd_cmd(0xca); // select 2nd line (0x80 + addr) - here addr = 0x4b
+               display_difference(difference_string, 4);
+               __delay_cycles(4000000);
+               first_pressed_button=-1;
+               P2IFG&=~BIT2;
+               __bic_SR_register_on_exit(CPUOFF);//WAKE UP CPU
+           }
+       }
+
+       if((P2IN&right_button)==0)
+       {
+           if((first_pressed_button) == NOBUTTON)
+           {
+               first_pressed_button = RIGHTBUTTON;
+               time_right_ms=time_main_in_ms;
+               P2IFG&=~BIT2;
+           }
+
+           if((first_pressed_button) == LEFTBUTTON)
+           {
+               P1OUT^=BIT6;//LIGHT THE LEFT LED FOR 4 SECONDS
+               __delay_cycles(4000000);
+               P1OUT&=~BIT6;
+               __delay_cycles(4000000);
+               time_right_ms=time_main_in_ms;
+               difference=abs(time_left_ms-time_right_ms);
+               itoa(difference, difference_string, 10);
+               lcd_cmd(0x80); // select 1st line (0x80 + addr) - here addr = 0x00
+               display_line("Player 1 wins!");
+               lcd_cmd(0xc0); // select 2nd line (0x80 + addr) - here addr = 0x40
+               display_line("Diff(ms): ");
+               lcd_cmd(0xca); // select 2nd line (0x80 + addr) - here addr = 0x4a
+               display_difference(difference_string, 4);
+               __delay_cycles(4000000);
+               first_pressed_button=-1;
+               P2IFG&=~BIT1;
+               __bic_SR_register_on_exit(CPUOFF);//WAKE UP CPU
+           }
+       }
+}
+
+#pragma vector=TIMER0_A0_VECTOR//TIMER0 ISR TO COUNT TIME
+__interrupt void TIME_CALCULATION(void)
+{
+    ms++;
+    if (ms>1000)
+    {
+        sec++;
+        ms=0;
+        if((first_pressed_button) == NOBUTTON)
+        {
+            lcd_cmd(0x80); // select 1st line (0x80 + addr) - here addr = 0x00
+            display_line("<--P1      P2-->");
+            lcd_cmd(0xc0); // select 2nd line (0x80 + addr) - here addr = 0x40
+            display_line("PRESS TO START");
+        }
+    }
+    time_main_in_ms=(sec*1000)+ms;
+}
